@@ -10,8 +10,8 @@ import ASN1Decoder
   case CertificateDigitalSignatureNotPresentError
   case CertificateMissingCodeSigningError
   case KeyIdMismatchError
-  case PublicKeyInvalidError
   case SignatureEncodingError
+  case SecurityFrameworkError
 }
 
 struct EXUpdatesCodeSigningMetadataFields {
@@ -21,8 +21,6 @@ struct EXUpdatesCodeSigningMetadataFields {
 
 @objc
 public class EXUpdatesCodeSigningConfiguration : NSObject {
-  static let EXUpdatesCryptoRootPublicKeyTag = "exp.host.rootkey"
-  
   // ASN.1 path to the extended key usage info within a CERT
   static let EXUpdatesCodeSigningCertificateExtendedUsageCodeSigningOID = "1.3.6.1.5.5.7.3.3"
   
@@ -46,7 +44,7 @@ public class EXUpdatesCodeSigningConfiguration : NSObject {
     }
     
     let keyUsage = x509Certificate.keyUsage
-    if (x509Certificate.keyUsage.isEmpty || !keyUsage[0]) {
+    if (keyUsage.isEmpty || !keyUsage[0]) {
       throw EXUpdatesCodeSigningConfigurationError.CertificateDigitalSignatureNotPresentError
     }
     
@@ -56,7 +54,7 @@ public class EXUpdatesCodeSigningConfiguration : NSObject {
     }
     
     keyId = metadata[EXUpdatesCodeSigningMetadataFields.KeyIdFieldKey] ?? EXUpdatesSignatureHeaderInfo.DefaultKeyId
-    algorithm = try parseCodeSigningAlgorithm(str: metadata[EXUpdatesCodeSigningMetadataFields.AlgorithmFieldKey])
+    algorithm = try parseCodeSigningAlgorithm(metadata[EXUpdatesCodeSigningMetadataFields.AlgorithmFieldKey])
   }
   
   @objc
@@ -81,7 +79,7 @@ public class EXUpdatesCodeSigningConfiguration : NSObject {
     guard let certificate = SecCertificateCreateWithData(nil, certificateDataDer as CFData) else {
       throw EXUpdatesCodeSigningConfigurationError.CertificateParseError
     }
-    guard let publicKey = SecCertificateCopyPublicKey(certificate) else {
+    guard let publicKey = SecCertificateCopyKey(certificate) else {
       throw EXUpdatesCodeSigningConfigurationError.CertificateParseError
     }
     
@@ -94,45 +92,62 @@ public class EXUpdatesCodeSigningConfiguration : NSObject {
   }
   
   private func sha256(data : Data) -> Data {
-      var digest = Data(count: Int(CC_SHA256_DIGEST_LENGTH))
-      data.withUnsafeBytes { bytes in
-        digest.withUnsafeMutableBytes { mutableBytes in
-          _ = CC_SHA256(bytes.baseAddress, CC_LONG(data.count), mutableBytes.bindMemory(to: UInt8.self).baseAddress)
-        }
+    var digest = Data(count: Int(CC_SHA256_DIGEST_LENGTH))
+    data.withUnsafeBytes { bytes in
+      digest.withUnsafeMutableBytes { mutableBytes in
+        _ = CC_SHA256(bytes.baseAddress, CC_LONG(data.count), mutableBytes.bindMemory(to: UInt8.self).baseAddress)
       }
-      return digest
+    }
+    return digest
   }
   
   private func verifyRSASHA256SignedData(signedData: Data, signatureData: Data, publicKey: SecKey) throws -> Bool {
     let hashBytes = self.sha256(data: signedData)
     var error: Unmanaged<CFError>?
-    return SecKeyVerifySignature(publicKey, .rsaSignatureDigestPKCS1v15SHA256, hashBytes as CFData, signatureData as CFData, &error)
+    if SecKeyVerifySignature(publicKey, .rsaSignatureDigestPKCS1v15SHA256, hashBytes as CFData, signatureData as CFData, &error) {
+      return true
+    } else {
+      if let error = error, (error.takeRetainedValue() as Error as NSError).code != errSecVerifyFailed {
+        print(error.takeRetainedValue())
+        throw EXUpdatesCodeSigningConfigurationError.SecurityFrameworkError
+      }
+      return false
+    }
   }
   
   private static let beginPemBlock = "-----BEGIN CERTIFICATE-----"
   private static let endPemBlock   = "-----END CERTIFICATE-----"
   
+  /**
+   * Mostly from ASN1Decoder with the fix for disallowing multiple certificatess in the PEM.
+   */
   private static func decodeToDER(pem pemData: Data) -> Data? {
-    if let pem = String(data: pemData, encoding: .ascii), pem.contains(beginPemBlock) {
-      let lines = pem.components(separatedBy: .newlines)
-      var base64buffer  = ""
-      var certLine = false
-      for line in lines {
-        if line == endPemBlock {
-          certLine = false
-        }
-        if certLine {
-          base64buffer.append(line)
-        }
-        if line == beginPemBlock {
-          certLine = true
-        }
+    guard let pem = String(data: pemData, encoding: .ascii) else {
+      return nil
+    }
+    
+    if pem.components(separatedBy: beginPemBlock).count - 1 != 1 {
+      return nil
+    }
+    
+    let lines = pem.components(separatedBy: .newlines)
+    var base64buffer  = ""
+    var certLine = false
+    for line in lines {
+      if line == endPemBlock {
+        certLine = false
       }
-      if let derDataDecoded = Data(base64Encoded: base64buffer) {
-        return derDataDecoded
+      if certLine {
+        base64buffer.append(line)
+      }
+      if line == beginPemBlock {
+        certLine = true
       }
     }
-
+    if let derDataDecoded = Data(base64Encoded: base64buffer) {
+      return derDataDecoded
+    }
+    
     return nil
   }
 }

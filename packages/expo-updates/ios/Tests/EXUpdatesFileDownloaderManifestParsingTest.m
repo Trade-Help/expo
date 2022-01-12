@@ -179,7 +179,7 @@
   XCTAssertNotNil(resultUpdateManifest);
 }
 
-- (void)testManifestParsing_JSONBodySigned_UnsignedRequest {
+- (void)testManifestParsing_JSONBodyExpectsSigned_ReceivedUnsignedRequest {
   EXUpdatesConfig *config = [EXUpdatesConfig configWithDictionary:@{
     EXUpdatesConfigUpdateUrlKey: @"https://exp.host/@test/test",
     EXUpdatesConfigCodeSigningCertificateKey: _modernJSONCertificate,

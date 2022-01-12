@@ -2,6 +2,8 @@
 
 #import <Foundation/Foundation.h>
 
+@class EXUpdatesCodeSigningConfiguration;
+
 NS_ASSUME_NONNULL_BEGIN
 
 typedef NS_ENUM(NSInteger, EXUpdatesCheckAutomaticallyConfig) {
@@ -44,8 +46,7 @@ FOUNDATION_EXPORT NSString * const EXUpdatesConfigCheckOnLaunchValueNever;
 @property (nonatomic, readonly) NSString *releaseChannel;
 @property (nonatomic, readonly) NSNumber *launchWaitMs;
 @property (nonatomic, readonly) EXUpdatesCheckAutomaticallyConfig checkOnLaunch;
-@property (nonatomic, readonly, strong, nullable) NSString *codeSigningCertificate;
-@property (nonatomic, readonly, strong, nullable) NSDictionary<NSString *, NSString *> *codeSigningMetadata;
+@property (nonatomic, readonly, strong, nullable) EXUpdatesCodeSigningConfiguration *codeSigningConfiguration;
 
 @property (nullable, nonatomic, readonly) NSString *sdkVersion;
 @property (nullable, nonatomic, readonly) NSString *runtimeVersion;

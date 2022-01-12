@@ -2,6 +2,12 @@
 
 #import <EXUpdates/EXUpdatesConfig.h>
 
+#if __has_include(<EXUpdates/EXUpdatesCodeSigningConfiguration-Swift.h>)
+#import <EXUpdates/EXUpdatesCodeSigningConfiguration-Swift.h>
+#else
+#import "EXUpdates-Swift.h"
+#endif
+
 NS_ASSUME_NONNULL_BEGIN
 
 @interface EXUpdatesConfig ()
@@ -14,8 +20,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, readwrite, strong) NSString *releaseChannel;
 @property (nonatomic, readwrite, strong) NSNumber *launchWaitMs;
 @property (nonatomic, readwrite, assign) EXUpdatesCheckAutomaticallyConfig checkOnLaunch;
-@property (nonatomic, readwrite, strong, nullable) NSString *codeSigningCertificate;
-@property (nonatomic, readwrite, strong, nullable) NSDictionary<NSString *, NSString *> *codeSigningMetadata;
+@property (nonatomic, readwrite, strong, nullable) EXUpdatesCodeSigningConfiguration *codeSigningConfiguration;
 
 @property (nullable, nonatomic, readwrite, strong) NSString *sdkVersion;
 @property (nullable, nonatomic, readwrite, strong) NSString *runtimeVersion;
@@ -114,7 +119,7 @@ NSString * const EXUpdatesConfigCheckOnLaunchValueNever = @"NEVER";
   if (requestHeaders) {
     if(![requestHeaders isKindOfClass:[NSDictionary class]]){
       @throw [NSException exceptionWithName:NSInternalInconsistencyException
-                                     reason:[NSString stringWithFormat:@"PList key '%@' must be a string valued Dictionary.", EXUpdatesConfigRequestHeadersKey]
+                                     reason:[NSString stringWithFormat:@"Plist key \"%@\" must be a string-valued Dictionary.", EXUpdatesConfigRequestHeadersKey]
                                    userInfo:@{}];
     }
     _requestHeaders = (NSDictionary *)requestHeaders;
@@ -122,7 +127,7 @@ NSString * const EXUpdatesConfigCheckOnLaunchValueNever = @"NEVER";
     for (id key in _requestHeaders){
       if (![_requestHeaders[key] isKindOfClass:[NSString class]]){
         @throw [NSException exceptionWithName:NSInternalInconsistencyException
-                                       reason:[NSString stringWithFormat:@"PList key '%@' must be a string valued Dictionary.", EXUpdatesConfigRequestHeadersKey]
+                                       reason:[NSString stringWithFormat:@"Plist key \"%@\" must be a string-valued Dictionary.", EXUpdatesConfigRequestHeadersKey]
                                      userInfo:@{}];
       }
     }
@@ -170,32 +175,63 @@ NSString * const EXUpdatesConfigCheckOnLaunchValueNever = @"NEVER";
     _hasEmbeddedUpdate = [(NSNumber *)hasEmbeddedUpdate boolValue];
   }
   
-  id codeSigningCertificate = config[EXUpdatesConfigCodeSigningCertificateKey];
-  if (codeSigningCertificate && [codeSigningCertificate isKindOfClass:[NSString class]]) {
-    _codeSigningCertificate = (NSString *)codeSigningCertificate;
+  NSString *codeSigningCertificate;
+  id codeSigningCertificateRaw = config[EXUpdatesConfigCodeSigningCertificateKey];
+  if (codeSigningCertificateRaw && [codeSigningCertificateRaw isKindOfClass:[NSString class]]) {
+    codeSigningCertificate = (NSString *)codeSigningCertificateRaw;
   }
   
-  id codeSigningMetadata = config[EXUpdatesConfigCodeSigningMetadataKey];
-  if (codeSigningMetadata) {
-    if(![codeSigningMetadata isKindOfClass:[NSDictionary class]]){
+  NSDictionary *codeSigningMetadata;
+  id codeSigningMetadataRaw = config[EXUpdatesConfigCodeSigningMetadataKey];
+  if (codeSigningMetadataRaw) {
+    if(![codeSigningMetadataRaw isKindOfClass:[NSDictionary class]]){
       @throw [NSException exceptionWithName:NSInternalInconsistencyException
-                                     reason:[NSString stringWithFormat:@"PList key '%@' must be a string valued Dictionary.", EXUpdatesConfigCodeSigningMetadataKey]
+                                     reason:[NSString stringWithFormat:@"Plist key \"%@\" must be a string-valued Dictionary.", EXUpdatesConfigCodeSigningMetadataKey]
                                    userInfo:@{}];
     }
-    _codeSigningMetadata = (NSDictionary *)codeSigningMetadata;
-    for (id key in _codeSigningMetadata){
-      if (![_codeSigningMetadata[key] isKindOfClass:[NSString class]]){
+    codeSigningMetadata = (NSDictionary *)codeSigningMetadataRaw;
+    for (id key in codeSigningMetadata){
+      if (![codeSigningMetadata[key] isKindOfClass:[NSString class]]){
         @throw [NSException exceptionWithName:NSInternalInconsistencyException
-                                       reason:[NSString stringWithFormat:@"PList key '%@' must be a string valued Dictionary.", EXUpdatesConfigCodeSigningMetadataKey]
+                                       reason:[NSString stringWithFormat:@"Plist key \"%@\" must be a string-valued Dictionary.", EXUpdatesConfigCodeSigningMetadataKey]
                                      userInfo:@{}];
       }
     }
+  }
+  
+  if (codeSigningCertificate) {
+    _codeSigningConfiguration = [EXUpdatesConfig codeSigningConfigurationForCodeSigningCertificate:codeSigningCertificate
+                                                                               codeSigningMetadata:codeSigningMetadata];
   }
 }
 
 - (BOOL)isMissingRuntimeVersion
 {
   return (!_runtimeVersion || !_runtimeVersion.length) && (!_sdkVersion || !_sdkVersion.length);
+}
+
++ (nullable EXUpdatesCodeSigningConfiguration *)codeSigningConfigurationForCodeSigningCertificate:(NSString *)codeSigningCertificate
+                                                                              codeSigningMetadata:(nullable NSDictionary *)codeSigningMetadata {
+  NSError *error;
+  EXUpdatesCodeSigningConfiguration *codeSigningConfiguration = [[EXUpdatesCodeSigningConfiguration alloc] initWithCertificate:codeSigningCertificate
+                                                                                                                      metadata:codeSigningMetadata
+                                                                                                                         error:&error];
+  if (error) {
+    NSString *message;
+    if (error.code == EXUpdatesCodeSigningConfigurationErrorCertificateParseError) {
+      message = @"Could not parse code signing certificate";
+    } else if (error.code == EXUpdatesCodeSigningConfigurationErrorCertificateValidityError) {
+      message = @"Certificate not valid";
+    } else if (error.code == EXUpdatesCodeSigningConfigurationErrorCertificateDigitalSignatureNotPresentError) {
+      message = @"Certificate digital signature not present";
+    } else if (error.code == EXUpdatesCodeSigningConfigurationErrorCertificateMissingCodeSigningError) {
+      message = @"Certificate missing code signing extended key usage";
+    }
+    
+    @throw [NSException exceptionWithName:NSInternalInconsistencyException reason:message userInfo:nil];
+  }
+  
+  return codeSigningConfiguration;
 }
 
 + (NSString *)normalizedURLOrigin:(NSURL *)url

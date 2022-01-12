@@ -402,33 +402,6 @@ const NSInteger EXUpdatesFileDownloaderErrorCodeCodeSigningSignatureError = 1048
   } errorBlock:errorBlock];
 }
 
-- (nullable EXUpdatesCodeSigningConfiguration *)codeSigningConfiguration {
-  if (!_config.codeSigningCertificate) {
-    return nil;
-  }
-
-  NSError *error;
-  EXUpdatesCodeSigningConfiguration *codeSigningConfiguration = [[EXUpdatesCodeSigningConfiguration alloc] initWithCertificate:_config.codeSigningCertificate
-                                                                                                                      metadata:_config.codeSigningMetadata
-                                                                                                                         error:&error];
-  if (error) {
-    NSString *message;
-    if (error.code == EXUpdatesCodeSigningConfigurationErrorCertificateParseError) {
-      message = @"Could not parse code signing certificate";
-    } else if (error.code == EXUpdatesCodeSigningConfigurationErrorCertificateValidityError) {
-      message = @"Certificate not valid";
-    } else if (error.code == EXUpdatesCodeSigningConfigurationErrorCertificateDigitalSignatureNotPresentError) {
-      message = @"Certificate digital signature not present";
-    } else if (error.code == EXUpdatesCodeSigningConfigurationErrorCertificateMissingCodeSigningError) {
-      message = @"Certificate missing code signing extended key usage";
-    }
-    
-    @throw [NSException exceptionWithName:NSInternalInconsistencyException reason:message userInfo:nil];
-  }
-  
-  return codeSigningConfiguration;
-}
-
 - (void)_createUpdateWithManifest:(NSDictionary *)manifest
                  manifestBodyData:(NSData *)manifestBodyData
                   manifestHeaders:(EXUpdatesManifestHeaders *)manifestHeaders
@@ -438,51 +411,52 @@ const NSInteger EXUpdatesFileDownloaderErrorCodeCodeSigningSignatureError = 1048
                      successBlock:(EXUpdatesFileDownloaderManifestSuccessBlock)successBlock
                        errorBlock:(EXUpdatesFileDownloaderErrorBlock)errorBlock
 {
-  @try {
-    EXUpdatesCodeSigningConfiguration *codeSigningConfiguration = self.codeSigningConfiguration;
-    if (codeSigningConfiguration) {
-      NSError *error;
-      EXUpdatesSignatureHeaderInfo *signatureHeaderInfo = [[EXUpdatesSignatureHeaderInfo alloc] initWithSignatureHeader:manifestHeaders.signature
-                                                                                                                  error:&error];
-      if (error) {
-        NSString *message;
-        if (error.code == EXUpdatesSignatureHeaderInfoErrorMissingSignatureHeader) {
-          message = @"No expo-signature header specified";
-        } else if (error.code == EXUpdatesSignatureHeaderInfoErrorStructuredFieldParseError) {
-          message = @"expo-signature structured header parsing failed";
-        } else if (error.code == EXUpdatesSignatureHeaderInfoErrorSigMissing) {
-          message = @"Structured field sig not found in expo-signature header";
-        }
-        @throw [NSException exceptionWithName:NSInternalInconsistencyException reason:message userInfo:nil];
+  EXUpdatesCodeSigningConfiguration *codeSigningConfiguration = _config.codeSigningConfiguration;
+  if (codeSigningConfiguration) {
+    NSError *error;
+    EXUpdatesSignatureHeaderInfo *signatureHeaderInfo = [[EXUpdatesSignatureHeaderInfo alloc] initWithSignatureHeader:manifestHeaders.signature
+                                                                                                                error:&error];
+    if (error) {
+      NSString *message;
+      if (error.code == EXUpdatesSignatureHeaderInfoErrorMissingSignatureHeader) {
+        message = @"No expo-signature header specified";
+      } else if (error.code == EXUpdatesSignatureHeaderInfoErrorStructuredFieldParseError) {
+        message = @"expo-signature structured header parsing failed";
+      } else if (error.code == EXUpdatesSignatureHeaderInfoErrorSigMissing) {
+        message = @"Structured field sig not found in expo-signature header";
       }
       
-      BOOL isSignatureValid = [codeSigningConfiguration verifySignatureHeaderInfoWithSignatureHeaderInfo:signatureHeaderInfo
-                                                                                              signedData:manifestBodyData
-                                                                                                   error:&error].boolValue;
-      if (error) {
-        NSString *message;
-        if (error.code == EXUpdatesCodeSigningConfigurationErrorKeyIdMismatchError) {
-          message = @"Key with keyid from signature not found in client configuration";
-        } else if (error.code == EXUpdatesCodeSigningConfigurationErrorPublicKeyInvalidError) {
-          message = @"Embedded certificate has an invalid key";
-        } else if (error.code == EXUpdatesCodeSigningConfigurationErrorSignatureEncodingError) {
-          message = @"Signature in header has invalid encoding";
-        }
-        @throw [NSException exceptionWithName:NSInternalInconsistencyException reason:message userInfo:nil];
-      }
-    
-      if (!isSignatureValid) {
-        @throw [NSException exceptionWithName:NSInternalInconsistencyException
-                                       reason:@"Manifest download was successful, but signature was incorrect"
-                                     userInfo:nil];
-      }
+      errorBlock([NSError errorWithDomain:EXUpdatesFileDownloaderErrorDomain
+                                     code:EXUpdatesFileDownloaderErrorCodeCodeSigningSignatureError
+                                 userInfo:@{NSLocalizedDescriptionKey: [NSString stringWithFormat:@"Downloaded manifest signature is invalid: %@", message]}]);
+      return;
     }
-  }
-  @catch (NSException *exception) {
-    errorBlock([NSError errorWithDomain:EXUpdatesFileDownloaderErrorDomain
-                                code:EXUpdatesFileDownloaderErrorCodeCodeSigningSignatureError
-                            userInfo:@{NSLocalizedDescriptionKey: [NSString stringWithFormat:@"Downloaded manifest signature is invalid: %@", exception.reason]}]);
-    return;
+    
+    BOOL isSignatureValid = [codeSigningConfiguration verifySignatureHeaderInfoWithSignatureHeaderInfo:signatureHeaderInfo
+                                                                                            signedData:manifestBodyData
+                                                                                                 error:&error].boolValue;
+    if (error) {
+      NSString *message;
+      if (error.code == EXUpdatesCodeSigningConfigurationErrorKeyIdMismatchError) {
+        message = @"Key with keyid from signature not found in client configuration";
+      } else if (error.code == EXUpdatesCodeSigningConfigurationErrorSignatureEncodingError) {
+        message = @"Signature in header has invalid encoding";
+      } else if (error.code == EXUpdatesCodeSigningConfigurationErrorSecurityFrameworkError) {
+        message = @"Signature verification failed due to security framework error";
+      }
+      
+      errorBlock([NSError errorWithDomain:EXUpdatesFileDownloaderErrorDomain
+                                     code:EXUpdatesFileDownloaderErrorCodeCodeSigningSignatureError
+                                 userInfo:@{NSLocalizedDescriptionKey: [NSString stringWithFormat:@"Downloaded manifest signature is invalid: %@", message]}]);
+      return;
+    }
+    
+    if (!isSignatureValid) {
+      errorBlock([NSError errorWithDomain:EXUpdatesFileDownloaderErrorDomain
+                                     code:EXUpdatesFileDownloaderErrorCodeCodeSigningSignatureError
+                                 userInfo:@{NSLocalizedDescriptionKey: @"Manifest download was successful, but signature was incorrect"}]);
+      return;
+    }
   }
   
   NSMutableDictionary *mutableManifest = manifest.mutableCopy;
@@ -648,14 +622,9 @@ const NSInteger EXUpdatesFileDownloaderErrorCodeCodeSigningSignatureError = 1048
     [request setValue:_config.requestHeaders[key] forHTTPHeaderField:key];
   }
   
-  @try {
-    EXUpdatesCodeSigningConfiguration *codeSigningConfiguration = self.codeSigningConfiguration;
-    if (codeSigningConfiguration) {
-      [request setValue:[codeSigningConfiguration createAcceptSignatureHeader] forHTTPHeaderField:@"expo-expects-signature"];
-    }
-  }
-  @catch (NSException *exception) {
-    NSLog(@"Code signing configuration is invalid: %@", exception.reason);
+  EXUpdatesCodeSigningConfiguration *codeSigningConfiguration = _config.codeSigningConfiguration;
+  if (codeSigningConfiguration) {
+    [request setValue:[codeSigningConfiguration createAcceptSignatureHeader] forHTTPHeaderField:@"expo-expects-signature"];
   }
 }
 

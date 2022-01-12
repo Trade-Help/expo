@@ -43,6 +43,6 @@ public class EXUpdatesSignatureHeaderInfo : NSObject {
     
     signature = signatureFieldValue
     keyId = parserOutputDictionary[EXUpdatesSignatureHeaderFields.KeyIdFieldKey] ?? EXUpdatesSignatureHeaderInfo.DefaultKeyId
-    algorithm = try parseCodeSigningAlgorithm(str: parserOutputDictionary[EXUpdatesSignatureHeaderFields.AlgorithmFieldKey])
+    algorithm = try parseCodeSigningAlgorithm(parserOutputDictionary[EXUpdatesSignatureHeaderFields.AlgorithmFieldKey])
   }
 }
